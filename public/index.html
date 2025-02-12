@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nearest Pharmacies and Washrooms Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body, html {
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        header {
+            background-color: #000000;
+            color: white;
+            padding: 10px;
+            text-align: center;
+        }
+
+        #map-container {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        #buttons-container {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 1000;
+        }
+
+        #buttons-container button {
+            padding: 10px;
+            background-color: #000000;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #buttons-container button:hover {
+            background-color: #000000;
+        }
+
+        footer {
+            background-color: #000000;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            display: flex;
+            justify-content: space-around;
+        }
+
+        footer a {
+            color: white;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+        
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Find Nearest Pharmacies and Washrooms</h1>
+        </header>
+
+        <div id="map-container">
+            <div id="map"></div> <!-- Map container -->
+            <div id="buttons-container">
+                <button onclick="getLocation('pharmacy')">Find Nearest Pharmacies</button>
+                <button onclick="getLocation('Washroom')">Find Nearest Washrooms</button>
+                <button id="resetBtn">Reset Map</button> <!-- New Reset Button -->
+            </div>
+        </div>
+        <div id="results"></div>
+
+        <footer>
+            <a href="home.html">Home</a>
+            <a href="index.html">Map</a>
+            <button id="logoutBtn">Logout</button>
+        </footer>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+    <script>
+        let map;
+        const radius = 3000; 
+        const apiKey = 'api key here'; 
+        let routingControl; 
+        let markers = []; // Array to hold markers
+
+
+        function initMap() {
+            map = L.map('map').setView([12.922915, 80.127457], 14); 
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+            }).addTo(map);
+        }
+
+        function getLocation(type) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((position) => success(position, type), error);
+            } else {
+                alert("Geolocation is not supported by this browser.");
+            }
+        }
+
+        function success(position, type) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            map.setView([lat, lon], 14); 
+
+            clearResults();
+
+            if (type === 'pharmacy') {
+                getPharmacies(lat, lon);
+            } else if (type === 'Washroom') {
+                getWashrooms(lat, lon);
+            }
+        }
+
+        function error() {
+            alert("Unable to retrieve your location.");
+        }
+
+        function clearResults() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+    
+            // Remove markers from the map
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = []; // Clear the markers array
+    
+            if (routingControl) {
+                map.removeControl(routingControl);
+                routingControl = null;
+            }
+        }
+
+        function getPharmacies(lat, lon) {
+            const pharmaciesUrl = `/api/pharmacies?location=${lat},${lon}&radius=${radius}&keyword=pharmacy&apiKey=${apiKey}`;
+            console.log('Fetching pharmacies from URL:', pharmaciesUrl);
+            
+            fetch(pharmaciesUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`API request failed with status ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const resultsDiv = document.getElementById('results');
+                    resultsDiv.innerHTML = '<h2>Nearest Pharmacies:</h2>';
+        
+                    if (data.results.length === 0) {
+                        resultsDiv.innerHTML += '<p>No pharmacies found nearby.</p>';
+                    } else {
+                        const nearestPharmacies = data.results.slice(0, 10); // Limit to 5 results
+                        nearestPharmacies.forEach(pharmacy => {
+                            const placeLat = pharmacy.geometry.location.lat; 
+                            const placeLon = pharmacy.geometry.location.lng;  
+                            const address = pharmacy.vicinity;
+        
+                            // Add marker for each pharmacy
+                            const marker = L.marker([placeLat, placeLon]).addTo(map)
+                                .bindPopup(`<h3>${pharmacy.name}</h3><p>${address}</p>`);
+
+                                markers.push(marker);
+                            marker.on('click', () => {
+                                routeToLocation(lat, lon, placeLat, placeLon);
+                                getPlaceDetails(pharmacy.place_id);
+                            });
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Failed to fetch pharmacies: ${error.message}`);
+                });
+        }
+        
+        function getPlaceDetails(placeId) {
+            const detailsUrl = `/api/pharmacyDetails?place_id=${placeId}&apiKey=${apiKey}`;
+            
+            fetch(detailsUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch place details: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(place => {
+                    const reviews = place.reviews || [];
+                    
+                    let reviewsContent = `<h3>${place.name}</h3>`;
+                    reviewsContent += `<p>Rating: ${place.rating} (${place.user_ratings_total} reviews)</p>`;
+                    
+                    if (reviews.length > 0) {
+                        const review = reviews[0]; 
+                        reviewsContent += `
+                            <h4>First User Review:</h4>
+                            <p><strong>${review.author_name}</strong> (Rating: ${review.rating})</p>
+                            <p>${review.text}</p>
+                        `;
+                    } else {
+                        reviewsContent += '<p>No reviews available.</p>';
+                    }
+                    
+                    L.popup()
+                        .setLatLng([place.geometry.location.lat, place.geometry.location.lng])  
+                        .setContent(reviewsContent)
+                        .openOn(map);
+                })
+                .catch(error => {
+                    console.error('Error fetching place details:', error);
+                    alert(`Failed to fetch place details: ${error.message}`);
+                });
+        }
+                
+        function getWashrooms(lat, lon) {
+            const keywords = ['toilet','toilets'];
+            const keywordQuery = keywords.join('|'); 
+            
+            const WashroomsUrl = `/api/washroom?location=${lat},${lon}&radius=${radius}&keyword=${keywordQuery}&apiKey=${apiKey}`;
+            
+            console.log('Fetching Washrooms from URL:', WashroomsUrl);
+            
+            fetch(WashroomsUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`API request failed with status ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const resultsDiv = document.getElementById('results');
+                    resultsDiv.innerHTML = '<h2>Nearest Washrooms:</h2>';
+        
+                    if (data.results.length === 0) {
+                        resultsDiv.innerHTML += '<p>No Washrooms found nearby.</p>';
+                    } else {
+                        const nearestWashrooms = data.results.slice(0, 10); // Limit to 5 results
+                        nearestWashrooms.forEach(Washroom => {
+                            const placeLat = Washroom.geometry.location.lat;  
+                            const placeLon = Washroom.geometry.location.lng;  
+                            const address = Washroom.vicinity;
+        
+                            const marker = L.marker([placeLat, placeLon]).addTo(map)
+                                .bindPopup(`<h3>${Washroom.name}</h3><p>${address}</p>`);
+                            
+                            markers.push(marker);
+                            marker.on('click', () => {
+                                routeToLocation(lat, lon, placeLat, placeLon);
+                                getWashroomDetails(Washroom.place_id); 
+                            });
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Failed to fetch Washrooms: ${error.message}`);
+                });
+        }
+        
+        function routeToLocation(startLat, startLon, endLat, endLon) {
+            if (routingControl) {
+                map.removeControl(routingControl);
+            }
+            
+            routingControl = L.Routing.control({
+                waypoints: [
+                    L.latLng(startLat, startLon),
+                    L.latLng(endLat, endLon)
+                ],
+                routeWhileDragging: true
+            }).addTo(map);
+        }
+        
+        function getWashroomDetails(placeId) {
+            const detailsUrl = `/api/washroomDetails?place_id=${placeId}&apiKey=${apiKey}`;
+            
+            fetch(detailsUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch washroom details: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(washroom => {
+                    const reviews = washroom.reviews || [];
+                    
+                    let reviewsContent = `<h3>${washroom.name}</h3>`;
+                    reviewsContent += `<p>Rating: ${washroom.rating} (${washroom.user_ratings_total} reviews)</p>`;
+                    
+                    if (reviews.length > 0) {
+                        const review = reviews[0];  
+                        reviewsContent += `
+                            <h4>First User Review:</h4>
+                            <p><strong>${review.author_name}</strong> (Rating: ${review.rating})</p>
+                            <p>${review.text}</p>
+                        `;
+                    } else {
+                        reviewsContent += '<p>No reviews available.</p>';
+                    }
+                    
+                    L.popup()
+                        .setLatLng([washroom.geometry.location.lat, washroom.geometry.location.lng])  
+                        .setContent(reviewsContent)
+                        .openOn(map);
+                })
+                .catch(error => {
+                    console.error('Error fetching washroom details:', error);
+                    alert(`Failed to fetch washroom details: ${error.message}`);
+                });
+        }
+        document.getElementById('logoutBtn').addEventListener('click', function () {
+            // Clear any session or authentication data if applicable
+            // Example: sessionStorage.clear(); localStorage.clear(); or log out on the server
+
+            // Redirect to the login page
+            window.location.href = 'login.html';})
+            
+            document.getElementById('resetBtn').addEventListener('click', function () {
+                clearResults(); // This will clear both markers and the routing control
+            });
+
+        window.onload = function() {
+            // Check if the user is logged in
+            const loggedIn = localStorage.getItem('loggedIn');
+            if (!loggedIn) {
+                window.location.href = 'login.html';  // Redirect to login page if not logged in
+            } else {
+                initMap();
+            }
+        };
+        
+   
+    </script>
+</body>
+</html>
